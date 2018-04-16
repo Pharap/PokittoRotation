@@ -6,10 +6,63 @@
 #include "FixedPoints.h"
 #include "FixedPointsCommon.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <cmath>
+
 using Fract = SQ15x16;
 
-Fract sine[361];
-Fract cosine[361];
+//Fract sine[361];
+//Fract cosine[361];
+
+Fract angleTable[64];
+
+constexpr const float floatPi = 3.141592654f;
+constexpr const double doublePi = 3.141592654;
+
+void generateAngleTable()
+{
+	const double factor = doublePi / 128.0;
+	for(unsigned int a = 0; a < 64; ++a)
+	{
+		angleTable[a] = static_cast<Fract>(std::sin(static_cast<double>(a) * factor));
+	}
+}
+
+Fract lookupAngle(std::uint_fast8_t index)
+{
+    return (index == 64) ? 1 : angleTable[(index & (0x3F))];
+}
+
+Fract Sin(std::uint8_t brads)
+{
+	const std::uint_fast8_t fastBrads = brads;
+	const std::uint_fast8_t quarter = ((fastBrads >> 6) & 0x03);
+	const std::uint_fast8_t index = ((fastBrads >> 0) & 0x3F);
+	switch (quarter)
+	{
+		case 0: return lookupAngle(index);
+		case 1: return lookupAngle(64 - index);
+		case 2: return -lookupAngle(index);
+		case 3: return -lookupAngle(64 - index);
+		default: return 0;
+	}
+}
+
+Fract Cos(std::uint8_t brads)
+{
+	const std::uint_fast8_t fastBrads = brads;
+	const std::uint_fast8_t quarter = ((fastBrads >> 6) & 0x03);
+	const std::uint_fast8_t index = ((fastBrads >> 0) & 0x3F);
+	switch (quarter)
+	{
+		case 0: return lookupAngle(64 - index);
+		case 1: return -lookupAngle(index);
+		case 2: return -lookupAngle(64 - index);
+		case 3: return lookupAngle(index);
+		default: return 0;
+	}
+}
 
 int main(void)
 {
@@ -17,40 +70,43 @@ int main(void)
     Pokitto::Display::load565Palette(sprite_pal); //load the palette for the image
     Pokitto::Display::bgcolor = 0;
 
-    Fract angle=0;
+    /*Fract angle=0;
 	for(int t=0; t<=360; t++)
 	{
 		sine[t] = sin(static_cast<double>(angle));
 		cosine[t] = cos(static_cast<double>(angle));
 		angle += (0.0174533); // radians
-	}
+	}*/
+	generateAngleTable();
 
-	int dstW = Pokitto::Display::getWidth();
-	int dstH = Pokitto::Display::getHeight();
-	int srcW = sprite[0];
-	int srcH = sprite[1];
-	int fDstCX = dstW/2;
-	int fDstCY = dstH/2;
-	int fSrcCX = srcW/2;
-	int fSrcCY = srcH/2;
-	int fAngle = 0;
-	Fract fScale = 2.5;
+	unsigned int dstW = Pokitto::Display::getWidth();
+	unsigned int dstH = Pokitto::Display::getHeight();
+	unsigned int fDstCX = dstW/2;
+	unsigned int fDstCY = dstH/2;
 
-	int col;
+	unsigned int srcW = sprite[0];
+	unsigned int srcH = sprite[1];
+	unsigned int fSrcCX = srcW/2;
+	unsigned int fSrcCY = srcH/2;
+
+	//const Fract fScale = 2.5;
+	const Fract inverseScale = 1.0 / 2.5;
+	unsigned int fAngle = 0;
 
 	/* the "while" loop runs as long as the program is running */
 	while (Pokitto::Core::isRunning())
 	{
 
 		/* Pokitto::Core::update() is processed whenever it is time to update the screen */
+
 		if (Pokitto::Core::update())
 		{
 
-			Fract SIN = sine[fAngle];  // pre-calculated look-up
-			Fract COS = cosine[fAngle];
+			Fract s = Sin(fAngle);//sine[fAngle];  // pre-calculated look-up
+			Fract c = Cos(fAngle);//cosine[fAngle];
 
-			Fract duCol = SIN * (1.0 / fScale);
-			Fract dvCol = COS * (1.0 / fScale);
+			Fract duCol = s * inverseScale;
+			Fract dvCol = c * inverseScale;
 			Fract duRow = dvCol;
 			Fract dvRow = -duCol;
 
@@ -60,22 +116,23 @@ int main(void)
 			Fract rowu = startingu;
 			Fract rowv = startingv;
 
-			for(int y = 0; y < dstH; ++y)
+			for(unsigned int y = 0; y < dstH; ++y)
 			{
-
 				Fract u = rowu;
 				Fract v = rowv;
 
-				for(int x = 0; x < dstW; ++x)
+				for(unsigned int x = 0; x < dstW; ++x)
 				{
 
 					if ( u >=0 && u < srcW && v >=0 && v < srcH )
 					{
-						uint16_t i = static_cast<int16_t>(v) * (srcW/2) + ((srcW-static_cast<int16_t>(u))>>1);
-						uint8_t pixel = sprite[i+2];
-						col = (static_cast<int16_t>(u) & 1) ? ((pixel >> 0) & 0x0F) : ((pixel >> 4) & 0x0F);
+						const int16_t iv = static_cast<int16_t>(v);
+						const int16_t iu = static_cast<int16_t>(u);
+						unsigned int i = (iv * (srcW/2)) + ((srcW - iu) / 2);
+						uint8_t pixel = sprite[i + 2];
+						uint8_t colour = ((iu & 1) != 0) ? ((pixel >> 0) & 0x0F) : ((pixel >> 4) & 0x0F);
 
-						Pokitto::Display::drawPixel(x,y,col);
+						Pokitto::Display::drawPixel(x, y, colour);
 					}
 
 					u += duRow;
@@ -86,11 +143,7 @@ int main(void)
 				rowv = rowv + dvCol;
 
 			}
-			// if(ang++>=359) ang=0;
-			fAngle -= 1;
-			if(fAngle < 1)
-				fAngle = 359;
-
+			--fAngle;
 		}
 	}
 
